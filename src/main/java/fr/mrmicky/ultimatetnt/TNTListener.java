@@ -1,6 +1,7 @@
 package fr.mrmicky.ultimatetnt;
 
 import fr.mrmicky.ultimatetnt.utils.BlockLocation;
+import fr.mrmicky.ultimatetnt.utils.WorldGuardHelper;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.GameMode;
@@ -86,6 +87,11 @@ public class TNTListener implements Listener {
             return;
         }
 
+        // Проверка WorldGuard разрешений
+        if (!WorldGuardHelper.canPlaceTNT(block.getLocation(), player)) {
+            return;
+        }
+
         block.setType(Material.AIR);
         plugin.spawnTNT(block.getLocation(), player, plugin.getRandomTNTName());
     }
@@ -116,6 +122,11 @@ public class TNTListener implements Listener {
                     return;
                 }
 
+                // Проверка WorldGuard разрешений на бросок TNT
+                if (!WorldGuardHelper.canPlaceTNT(player.getLocation(), player)) {
+                    return;
+                }
+
                 Vector velocity = player.getLocation().getDirection().multiply(plugin.getConfig().getDouble("Throw.Velocity"));
                 plugin.spawnTNT(player.getEyeLocation(), player, plugin.getRandomTNTName(), false).setVelocity(velocity);
                 throwCooldown.add(player.getUniqueId());
@@ -142,6 +153,11 @@ public class TNTListener implements Listener {
                 return;
             }
 
+            // Проверка WorldGuard разрешений на поджигание TNT
+            if (!WorldGuardHelper.canPlaceTNT(block.getLocation(), player)) {
+                return;
+            }
+
             block.setType(Material.AIR);
             plugin.spawnTNT(block.getLocation(), player, plugin.getRandomTNTName());
             e.setCancelled(true);
@@ -160,6 +176,11 @@ public class TNTListener implements Listener {
         Inventory inv = dispenser.getInventory();
         BlockFace face = ((Directional) dispenser.getData()).getFacing();
         Block block = e.getBlock().getRelative(face);
+
+        // Проверка WorldGuard разрешений на размещение TNT из диспенсера
+        if (!WorldGuardHelper.canExplode(block.getLocation(), null)) {
+            return;
+        }
 
         e.setCancelled(true);
 
@@ -280,14 +301,32 @@ public class TNTListener implements Listener {
 
     private void handleExplosion(Event e, Entity source, Location location,
                                  float yield, List<Block> blockList) {
+        // Проверка WorldGuard разрешений на взрывы
+        Player sourcePlayer = source instanceof Player ? (Player) source : null;
+        boolean canExplodeInRegion = WorldGuardHelper.canExplode(location, sourcePlayer);
+        
+        // Если взрывы запрещены в регионе, очищаем список блоков и отключаем реалистичную физику
+        if (!canExplodeInRegion) {
+            blockList.clear(); // Взрыв происходит, но не разрушает блоки
+        }
+        
         boolean noBreak = plugin.getConfig().getBoolean("DisableBreak");
-        boolean realistic = plugin.getConfig().getBoolean("RealisticExplosion");
+        boolean realistic = plugin.getConfig().getBoolean("RealisticExplosion") && canExplodeInRegion;
         boolean restore = plugin.getConfig().getBoolean("RestoreBlocks.Enable");
         boolean whitelist = plugin.getConfig().getBoolean("Whitelist.Enable");
         List<String> blockBlacklist = plugin.getConfig().getStringList("BlacklistBlocks");
         List<String> blockWhitelist = plugin.getConfig().getStringList("Whitelist.BlockList");
+        List<String> realisticBlacklist = plugin.getConfig().getStringList("RealisticExplosionBlacklist");
         String name = plugin.getRandomTNTName();
         int maxFallingBlocks = plugin.getConfig().getInt("MaxFallingBlocksPerChunk") - getFallingBlocksInChunk(location.getChunk());
+        
+        // Check if the explosion entity is in the realistic explosion blacklist
+        if (e instanceof EntityExplodeEvent) {
+            Entity explodingEntity = ((EntityExplodeEvent) e).getEntity();
+            if (realistic && plugin.containsIgnoreCase(realisticBlacklist, explodingEntity.getType().toString())) {
+                realistic = false;
+            }
+        }
 
         if (plugin.getConfig().getBoolean("DisableDrops")) {
             yield = 0;
@@ -302,6 +341,12 @@ public class TNTListener implements Listener {
         Iterator<Block> blockIterator = blockList.iterator();
         while (blockIterator.hasNext()) {
             Block block = blockIterator.next();
+            
+            // Проверяем, может ли этот блок быть разрушен взрывом (защита от взрывов с границы региона)
+            if (!WorldGuardHelper.canExplodeBlock(block.getLocation(), location, sourcePlayer)) {
+                blockIterator.remove();
+                continue;
+            }
 
             if (block.getType() == Material.TNT) {
                 block.setType(Material.AIR);
@@ -371,8 +416,17 @@ public class TNTListener implements Listener {
         }
 
         BlockState state = block.getState();
-        String[] signLines = state instanceof Sign ? ((Sign) state).getLines() : null;
-        ItemStack[] items = state instanceof InventoryHolder ? ((InventoryHolder) state).getInventory().getContents() : null;
+        final String[] signLines;
+        if (state instanceof Sign) {
+            Sign sign = (Sign) state;
+            signLines = new String[4];
+            for (int i = 0; i < 4; i++) {
+                signLines[i] = sign.getSide(org.bukkit.block.sign.Side.FRONT).getLine(i);
+            }
+        } else {
+            signLines = null;
+        }
+        final ItemStack[] items = state instanceof InventoryHolder ? ((InventoryHolder) state).getInventory().getContents() : null;
 
         if (items != null) {
             for (int i = 0; i < items.length; i++) {
@@ -406,7 +460,7 @@ public class TNTListener implements Listener {
                 if (signLines != null && newState instanceof Sign) {
                     Sign sign = (Sign) newState;
                     for (int i = 0; i < 4; i++) {
-                        sign.setLine(i, signLines[i]);
+                        sign.getSide(org.bukkit.block.sign.Side.FRONT).setLine(i, signLines[i]);
                     }
                     sign.update();
                 } else if (items != null && newState instanceof InventoryHolder) {
@@ -431,8 +485,8 @@ public class TNTListener implements Listener {
     }
 
     private boolean isTNT(Entity entity) {
-        return entity.getType() == EntityType.PRIMED_TNT
-                || entity.getType() == EntityType.MINECART_TNT
-                || entity.getType() == EntityType.ENDER_CRYSTAL;
+        return entity.getType() == EntityType.TNT
+                || entity.getType() == EntityType.TNT_MINECART
+                || entity.getType() == EntityType.END_CRYSTAL;
     }
 }

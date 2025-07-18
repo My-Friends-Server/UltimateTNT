@@ -1,6 +1,7 @@
 package fr.mrmicky.ultimatetnt;
 
 import fr.mrmicky.ultimatetnt.utils.TntUtils;
+import fr.mrmicky.ultimatetnt.utils.WorldGuardHelper;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -26,6 +27,9 @@ public final class UltimateTNT extends JavaPlugin {
     @Override
     public void onEnable() {
         saveDefaultConfig();
+
+        // Инициализация WorldGuard интеграции
+        WorldGuardHelper.initialize(this);
 
         getCommand("ultimatetnt").setExecutor(new CommandUltimateTNT(this));
         getServer().getPluginManager().registerEvents(new TNTListener(this), this);

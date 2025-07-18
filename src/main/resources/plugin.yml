@@ -5,6 +5,7 @@ description: The ultimate TNT plugin
 website: https://www.spigotmc.org/resources/ultimatetnt.49388/
 api-version: 1.13
 main: fr.mrmicky.ultimatetnt.UltimateTNT
+softdepend: [WorldGuard]
 commands:
   ultimatetnt:
     description: Display information about the plugin and reload the config
